@@ -21,3 +21,6 @@
 #include "ext/save-png.h"
 #include "ext/import-svg.h"
 #include "ext/import-font.h"
+#include "ext/save-dds.h"
+#include "ext/json.hpp"
+#include "ext/save_material.h"

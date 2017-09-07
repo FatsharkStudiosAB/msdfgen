@@ -78,6 +78,15 @@
       <Filter>Extensions</Filter>
     </ClInclude>
     <ClInclude Include="resource.h" />
+    <ClInclude Include="ext\save-dds.h">
+      <Filter>Extensions</Filter>
+    </ClInclude>
+    <ClInclude Include="ext\json.hpp">
+      <Filter>Extensions</Filter>
+    </ClInclude>
+    <ClInclude Include="ext\save_material.h">
+      <Filter>Extensions</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -136,6 +145,12 @@
     </ClCompile>
     <ClCompile Include="core\msdfgen.cpp">
       <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="ext\save-dds.cpp">
+      <Filter>Extensions</Filter>
+    </ClCompile>
+    <ClCompile Include="ext\save_material.cpp">
+      <Filter>Extensions</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -12,6 +12,11 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <vector>
+#include <fstream>
+#include <sstream>
+#define STB_RECT_PACK_IMPLEMENTATION
+#include <stb_rect_pack.h>
 
 #include "msdfgen.h"
 #include "msdfgen-ext.h"
@@ -32,7 +37,23 @@ enum Format {
     TEXT_FLOAT,
     BINARY,
     BINARY_FLOAT,
-    BINART_FLOAT_BE
+    BINART_FLOAT_BE,
+	DDS
+};
+
+struct Glyph {
+	int code; //unicode code
+	Shape shape; //vector shape of the glyph
+	float advance; //how much should the cursor advance after writing
+	int x; //x position in font atlas
+	int y; //y position in font atlas
+	float xoffset;
+	float yoffset;
+	int width;
+	int height;
+	Bitmap<FloatRGB> bitmap; //generated bitmap msdf
+
+	
 };
 
 static char toupper(char c) {
@@ -74,6 +95,24 @@ static bool parseUnicode(int &unicode, const char *arg) {
         return true;
     }
     return false;
+}
+
+static bool parseTextfile(const char* filename, std::vector<int>& charCodesOut) {
+	FILE* fin = fopen(filename, "r, ccs=UTF-8");
+	if (!fin) {
+		return false;
+	}
+	wint_t code;
+	while ((code = fgetwc(fin)) != WEOF) {
+		if(code != L'\n')
+			charCodesOut.push_back(code);
+	}
+	if (feof(fin)) {
+		fclose(fin);
+		return true;
+	}
+	printf("Error reading textfile input\n");
+	return false;
 }
 
 static bool parseAngle(double &value, const char *arg) {
@@ -213,12 +252,14 @@ static const char * writeOutput(const Bitmap<T> &bitmap, const char *filename, F
             else if (cmpExtension(filename, ".bmp")) format = BMP;
             else if (cmpExtension(filename, ".txt")) format = TEXT;
             else if (cmpExtension(filename, ".bin")) format = BINARY;
+			else if (cmpExtension(filename, ".dds")) format = DDS;
             else
                 return "Could not deduce format from output file name.";
         }
         switch (format) {
             case PNG: return savePng(bitmap, filename) ? NULL : "Failed to write output PNG image.";
             case BMP: return saveBmp(bitmap, filename) ? NULL : "Failed to write output BMP image.";
+			case DDS: return saveDDS(bitmap, filename) ? NULL : "Failed to write output DDS image";
             case TEXT: case TEXT_FLOAT: {
                 FILE *file = fopen(filename, "w");
                 if (!file) return "Failed to write output text file.";
@@ -241,6 +282,7 @@ static const char * writeOutput(const Bitmap<T> &bitmap, const char *filename, F
                 fclose(file);
                 return NULL;
             }
+			
             default:
                 break;
         }
@@ -253,6 +295,93 @@ static const char * writeOutput(const Bitmap<T> &bitmap, const char *filename, F
             return "Unsupported format for standard output.";
     }
     return NULL;
+}
+
+void PackGlyphs(std::vector<Glyph>& glyphs, int glyphSize, int& width, int& height) {
+	stbrp_context context;
+	//calc possible size
+	int w = (int)sqrt(glyphSize * glyphSize * glyphs.size()) + 1;
+	w = (w + glyphSize - 1) & ~(glyphSize - 1); //make image divisable by four to make sure compression can work
+	stbrp_node* nodes = (stbrp_node*)malloc(w * 2 * sizeof(stbrp_node));
+	width = w; height = w;
+	stbrp_init_target(&context, w, w, nodes, w * 2);
+	stbrp_rect* rects = (stbrp_rect*)malloc(glyphs.size() * sizeof(stbrp_rect));
+	//build rects
+	//TODO: Pack them into smaller rectangles than the base size based on metrics
+	for (unsigned i = 0; i < glyphs.size(); ++i) {
+		rects[i].w = glyphSize;
+		rects[i].h = glyphSize;
+		rects[i].id = i;
+	}
+	
+	stbrp_pack_rects(&context, rects, glyphs.size());
+
+	for (unsigned i = 0; i < glyphs.size(); ++i) {
+		glyphs[i].x = rects[i].x;
+		glyphs[i].y = rects[i].y;
+	}
+
+	free(rects);
+	free(nodes);
+}
+
+void WriteGlyphsToAtlas(std::vector<Glyph>& glyphs, int glyphSize, Bitmap<FloatRGB>& atlas) {
+	for (auto& g : glyphs) {
+		for (int y = 0; y < glyphSize; ++y) {
+			for (int x = 0; x < glyphSize; ++x) {
+				atlas(g.x + x, g.y + y) = g.bitmap(x, y);
+			}
+		}
+	}
+}
+
+void ConvertJsonToSjson(std::string& in) {
+	std::replace(in.begin(), in.end(), ':', '=');
+	in.erase(std::remove(in.begin(), in.end(), '"'), in.end());
+	in.erase(std::remove(in.begin(), in.end(), ','), in.end());
+	if (in[0] == '{')
+		in[0] = ' ';
+	if (in[in.size() - 1] == '}')
+		in[in.size() - 1] = ' ';
+}
+
+void SerializeGlyphs(const std::vector<Glyph>& glyphs,int charSize, int atlasWidth, int atlasHeight, const char* filename) {
+	using namespace nlohmann;
+	std::stringstream ss;
+	try {
+		json root;
+		root["width"] = atlasWidth;
+		root["height"] = atlasHeight;
+		root["size"] = charSize;
+		root["line_height"] = 45; //TODO: Figure out what these do
+		root["base_line"] = 35;
+		for (auto& g : glyphs) {
+			json o;
+			o["x"] = g.x;
+			o["y"] = g.y;
+			o["code"] = g.code;
+			o["xadvance"] = g.advance;
+			o["width"] = g.width;
+			o["height"] = g.height;
+			o["xoffset"] = g.xoffset;
+			o["yoffset"] = g.yoffset;
+			root["glyphs"].push_back(o);
+		}
+		ss << std::setw(4) << root;
+	}
+	catch (std::exception e) {
+		printf("json error: %s\n", e.what());
+	}
+	std::string s = ss.str();
+	ConvertJsonToSjson(s);
+
+	std::string file(filename);
+	file.erase(file.begin() + file.find_last_of('.'), file.end());
+	file += ".font";
+
+	std::ofstream os(file);
+	os << std::setw(4) << s;
+	os.close();
 }
 
 static const char *helpText =
@@ -359,6 +488,7 @@ int main(int argc, const char * const *argv) {
     const char *testRenderMulti = NULL;
     bool outputSpecified = false;
     int unicode = 0;
+	std::vector<int> unicodes;
     int svgPathIndex = 0;
 
     int width = 64, height = 64;
@@ -467,6 +597,8 @@ int main(int argc, const char * const *argv) {
             if (!parseUnsigned(w, argv[argPos+1]) || !parseUnsigned(h, argv[argPos+2]) || !w || !h)
                 ABORT("Invalid size arguments. Use -size <width> <height> with two positive integers.");
             width = w, height = h;
+			scale = w / 32.0f;
+			scaleSpecified = true;
             argPos += 3;
             continue;
         }
@@ -602,6 +734,12 @@ int main(int argc, const char * const *argv) {
             argPos += 2;
             continue;
         }
+		ARG_CASE("-textfile", 1) {
+			if (!parseTextfile(argv[argPos + 1], unicodes))
+				ABORT("Error parsing textfile");
+			argPos += 2;
+			continue;
+		}
         ARG_CASE("-help", 0)
             ABORT(helpText);
         printf("Unknown setting or insufficient parameters: %s\n", arg);
@@ -616,7 +754,14 @@ int main(int argc, const char * const *argv) {
     double glyphAdvance = 0;
     if (!inputType || !input)
         ABORT("No input specified! Use either -svg <file.svg> or -font <file.ttf/otf> <character code>, or see -help.");
-    Shape shape;
+
+	Shape shape;
+	std::vector<Glyph> glyphs;
+	if (unicode != 9608)
+		unicodes.push_back(unicode);
+	if (!unicodes.empty())
+		unicode = 9608;
+
     switch (inputType) {
         case SVG: {
             if (!loadSvgShape(shape, input, svgPathIndex, &svgDims))
@@ -633,11 +778,21 @@ int main(int argc, const char * const *argv) {
                 deinitializeFreetype(ft);
                 ABORT("Failed to load font file.");
             }
-            if (!loadGlyph(shape, font, unicode, &glyphAdvance)) {
-                destroyFont(font);
-                deinitializeFreetype(ft);
-                ABORT("Failed to load glyph from font file.");
-            }
+			for (auto& c : unicodes) {
+				if (!loadGlyph(shape, font, c, &glyphAdvance)) {
+					destroyFont(font);
+					deinitializeFreetype(ft);
+					ABORT("Failed to load glyph from font file.");
+				}
+				Glyph g;
+				g.shape = shape;
+				g.code = c;
+				g.width = width;
+				g.height = height;
+				g.xoffset = 0;
+				g.yoffset = 0;
+				glyphs.push_back(g);
+			}
             destroyFont(font);
             deinitializeFreetype(ft);
             break;
@@ -664,187 +819,172 @@ int main(int argc, const char * const *argv) {
         default:
             break;
     }
+	if (glyphs.empty()) {
+		Glyph g;
+		g.shape = shape;
+		g.code = unicode;
+		g.width = width;
+		g.height = height;
+		g.xoffset = 0;
+		g.yoffset = 0;
+		glyphs.push_back(g);
+	}
 
+	std::vector<Bitmap<float>> sdfList;
     // Validate and normalize shape
-    if (!shape.validate())
-        ABORT("The geometry of the loaded shape is invalid.");
-    shape.normalize();
-    if (yFlip)
-        shape.inverseYAxis = !shape.inverseYAxis;
+	for (auto& g : glyphs) {
+		if (!g.shape.validate())
+			ABORT("The geometry of the loaded shape is invalid.");
+		g.shape.normalize();
+		if (yFlip)
+			g.shape.inverseYAxis = !g.shape.inverseYAxis;
 
-    double avgScale = .5*(scale.x+scale.y);
-    struct {
-        double l, b, r, t;
-    } bounds = {
-        LARGE_VALUE, LARGE_VALUE, -LARGE_VALUE, -LARGE_VALUE
-    };
-    if (autoFrame || mode == METRICS || printMetrics || orientation == GUESS)
-        shape.bounds(bounds.l, bounds.b, bounds.r, bounds.t);
+		double avgScale = .5*(scale.x + scale.y);
+		struct {
+			double l, b, r, t;
+		} bounds = {
+			LARGE_VALUE, LARGE_VALUE, -LARGE_VALUE, -LARGE_VALUE
+		};
+		if (autoFrame || mode == METRICS || printMetrics || orientation == GUESS)
+			g.shape.bounds(bounds.l, bounds.b, bounds.r, bounds.t);
+		// Auto-frame
+		if (autoFrame) {
+			double l = bounds.l, b = bounds.b, r = bounds.r, t = bounds.t;
+			Vector2 frame(width, height);
+			if (rangeMode == RANGE_UNIT)
+				l -= range, b -= range, r += range, t += range;
+			else if (!scaleSpecified)
+				frame -= 2 * pxRange;
+			if (l >= r || b >= t)
+				l = 0, b = 0, r = 1, t = 1;
+			if (frame.x <= 0 || frame.y <= 0)
+				ABORT("Cannot fit the specified pixel range.");
+			Vector2 dims(r - l, t - b);
+			if (scaleSpecified)
+				translate = .5*(frame / scale - dims) - Vector2(l, b);
+			else {
+				if (dims.x*frame.y < dims.y*frame.x) {
+					translate.set(.5*((frame.x / frame.y) * dims.y - dims.x) - l, -b);
+					scale = avgScale = frame.y / dims.y;
+				}
+				else {
+					translate.set(-l, .5*((frame.y / frame.x) * dims.x - dims.y) - b);
+					scale = avgScale = frame.x / dims.x;
+				}
+			}
+			if (rangeMode == RANGE_PX && !scaleSpecified)
+				translate += pxRange / scale;
+		}
+	
 
-    // Auto-frame
-    if (autoFrame) {
-        double l = bounds.l, b = bounds.b, r = bounds.r, t = bounds.t;
-        Vector2 frame(width, height);
-        if (rangeMode == RANGE_UNIT)
-            l -= range, b -= range, r += range, t += range;
-        else if (!scaleSpecified)
-            frame -= 2*pxRange;
-        if (l >= r || b >= t)
-            l = 0, b = 0, r = 1, t = 1;
-        if (frame.x <= 0 || frame.y <= 0)
-            ABORT("Cannot fit the specified pixel range.");
-        Vector2 dims(r-l, t-b);
-        if (scaleSpecified)
-            translate = .5*(frame/scale-dims)-Vector2(l, b);
-        else {
-            if (dims.x*frame.y < dims.y*frame.x) {
-                translate.set(.5*(frame.x/frame.y*dims.y-dims.x)-l, -b);
-                scale = avgScale = frame.y/dims.y;
-            } else {
-                translate.set(-l, .5*(frame.y/frame.x*dims.x-dims.y)-b);
-                scale = avgScale = frame.x/dims.x;
-            }
-        }
-        if (rangeMode == RANGE_PX && !scaleSpecified)
-            translate += pxRange/scale;
-    }
+		if (rangeMode == RANGE_PX)
+			range = pxRange/min(scale.x, scale.y);
+	
 
-    if (rangeMode == RANGE_PX)
-        range = pxRange/min(scale.x, scale.y);
+		// Compute output
+		Bitmap<float> sdf;
+		Bitmap<FloatRGB> msdf;
+		switch (mode) {
+			case SINGLE: {
+				sdf = Bitmap<float>(width, height);
+				if (legacyMode)
+					generateSDF_legacy(sdf, g.shape, range, scale, translate);
+				else
+					generateSDF(sdf, g.shape, range, scale, translate);
+				break;
+			}
+			case PSEUDO: {
+				sdf = Bitmap<float>(width, height);
+				if (legacyMode)
+					generatePseudoSDF_legacy(sdf, g.shape, range, scale, translate);
+				else
+					generatePseudoSDF(sdf, g.shape, range, scale, translate);
+				break;
+			}
+			case MULTI: {
+				if (!skipColoring)
+					edgeColoringSimple(g.shape, angleThreshold, coloringSeed);
+				if (edgeAssignment)
+					parseColoring(g.shape, edgeAssignment);
+				g.bitmap = Bitmap<FloatRGB>(width, height);
+				if (legacyMode)
+					generateMSDF_legacy(g.bitmap, g.shape, range, scale, translate, edgeThreshold);
+				else
+					generateMSDF(g.bitmap, g.shape, range, scale, translate, edgeThreshold);
+				break;
+			}
+			default:
+				break;
+		}
 
-    // Print metrics
-    if (mode == METRICS || printMetrics) {
-        FILE *out = stdout;
-        if (mode == METRICS && outputSpecified)
-            out = fopen(output, "w");
-        if (!out)
-            ABORT("Failed to write output file.");
-        if (shape.inverseYAxis)
-            fprintf(out, "inverseY = true\n");
-        if (bounds.r >= bounds.l && bounds.t >= bounds.b)
-            fprintf(out, "bounds = %.12g, %.12g, %.12g, %.12g\n", bounds.l, bounds.b, bounds.r, bounds.t);
-        if (svgDims.x != 0 && svgDims.y != 0)
-            fprintf(out, "dimensions = %.12g, %.12g\n", svgDims.x, svgDims.y);
-        if (glyphAdvance != 0)
-            fprintf(out, "advance = %.12g\n", glyphAdvance);
-        if (autoFrame) {
-            if (!scaleSpecified)
-                fprintf(out, "scale = %.12g\n", avgScale);
-            fprintf(out, "translate = %.12g, %.12g\n", translate.x, translate.y);
-        }
-        if (rangeMode == RANGE_PX)
-            fprintf(out, "range = %.12g\n", range);
-        if (mode == METRICS && outputSpecified)
-            fclose(out);
-    }
+		if (orientation == GUESS) {
+			// Get sign of signed distance outside bounds
+			Point2 p(bounds.l-(bounds.r-bounds.l)-1, bounds.b-(bounds.t-bounds.b)-1);
+			double dummy;
+			SignedDistance minDistance;
+			for (std::vector<Contour>::const_iterator contour = shape.contours.begin(); contour != shape.contours.end(); ++contour)
+				for (std::vector<EdgeHolder>::const_iterator edge = contour->edges.begin(); edge != contour->edges.end(); ++edge) {
+					SignedDistance distance = (*edge)->signedDistance(p, dummy);
+					if (distance < minDistance)
+						minDistance = distance;
+				}
+			orientation = minDistance.distance <= 0 ? KEEP : REVERSE;
+		}
+		if (orientation == REVERSE) {
+			invertColor(sdf);
+			invertColor(g.bitmap);
+		}
 
-    // Compute output
-    Bitmap<float> sdf;
-    Bitmap<FloatRGB> msdf;
-    switch (mode) {
-        case SINGLE: {
-            sdf = Bitmap<float>(width, height);
-            if (legacyMode)
-                generateSDF_legacy(sdf, shape, range, scale, translate);
-            else
-                generateSDF(sdf, shape, range, scale, translate);
-            break;
-        }
-        case PSEUDO: {
-            sdf = Bitmap<float>(width, height);
-            if (legacyMode)
-                generatePseudoSDF_legacy(sdf, shape, range, scale, translate);
-            else
-                generatePseudoSDF(sdf, shape, range, scale, translate);
-            break;
-        }
-        case MULTI: {
-            if (!skipColoring)
-                edgeColoringSimple(shape, angleThreshold, coloringSeed);
-            if (edgeAssignment)
-                parseColoring(shape, edgeAssignment);
-            msdf = Bitmap<FloatRGB>(width, height);
-            if (legacyMode)
-                generateMSDF_legacy(msdf, shape, range, scale, translate, edgeThreshold);
-            else
-                generateMSDF(msdf, shape, range, scale, translate, edgeThreshold);
-            break;
-        }
-        default:
-            break;
-    }
+		//update data
+		g.advance = bounds.r + bounds.l;
+		g.xoffset = -translate.x;
+		g.yoffset = translate.y;
+	}
+	//collect glyphs
+	int atlasWidth, atlasHeight;
+	PackGlyphs(glyphs, width, atlasWidth, atlasHeight);
+	Bitmap<FloatRGB> atlas(atlasWidth, atlasHeight);
+	WriteGlyphsToAtlas(glyphs, width, atlas);
+	SerializeGlyphs(glyphs,width, atlasWidth, atlasHeight, output);
+	saveMaterial(output);
+	saveTexture(output);
+	const char *error = NULL;
+	switch (mode) {
+	    case MULTI:
+	        error = writeOutput(atlas, output, format);
+	        if (error)
+	            ABORT(error);
+	        break;
+	    default:
+	        break;
+	}
 
-    if (orientation == GUESS) {
-        // Get sign of signed distance outside bounds
-        Point2 p(bounds.l-(bounds.r-bounds.l)-1, bounds.b-(bounds.t-bounds.b)-1);
-        double dummy;
-        SignedDistance minDistance;
-        for (std::vector<Contour>::const_iterator contour = shape.contours.begin(); contour != shape.contours.end(); ++contour)
-            for (std::vector<EdgeHolder>::const_iterator edge = contour->edges.begin(); edge != contour->edges.end(); ++edge) {
-                SignedDistance distance = (*edge)->signedDistance(p, dummy);
-                if (distance < minDistance)
-                    minDistance = distance;
-            }
-        orientation = minDistance.distance <= 0 ? KEEP : REVERSE;
-    }
-    if (orientation == REVERSE) {
-        invertColor(sdf);
-        invertColor(msdf);
-    }
-
+	
     // Save output
-    if (shapeExport) {
-        FILE *file = fopen(shapeExport, "w");
-        if (file) {
-            writeShapeDescription(file, shape);
-            fclose(file);
-        } else
-            puts("Failed to write shape export file.");
-    }
-    const char *error = NULL;
-    switch (mode) {
-        case SINGLE:
-        case PSEUDO:
-            error = writeOutput(sdf, output, format);
-            if (error)
-                ABORT(error);
-            if (testRenderMulti || testRender)
-                simulate8bit(sdf);
-            if (testRenderMulti) {
-                Bitmap<FloatRGB> render(testWidthM, testHeightM);
-                renderSDF(render, sdf, avgScale*range);
-                if (!savePng(render, testRenderMulti))
-                    puts("Failed to write test render file.");
-            }
-            if (testRender) {
-                Bitmap<float> render(testWidth, testHeight);
-                renderSDF(render, sdf, avgScale*range);
-                if (!savePng(render, testRender))
-                    puts("Failed to write test render file.");
-            }
-            break;
-        case MULTI:
-            error = writeOutput(msdf, output, format);
-            if (error)
-                ABORT(error);
-            if (testRenderMulti || testRender)
-                simulate8bit(msdf);
-            if (testRenderMulti) {
-                Bitmap<FloatRGB> render(testWidthM, testHeightM);
-                renderSDF(render, msdf, avgScale*range);
-                if (!savePng(render, testRenderMulti))
-                    puts("Failed to write test render file.");
-            }
-            if (testRender) {
-                Bitmap<float> render(testWidth, testHeight);
-                renderSDF(render, msdf, avgScale*range);
-                if (!savePng(render, testRender))
-                    ABORT("Failed to write test render file.");
-            }
-            break;
-        default:
-            break;
-    }
+    //if (shapeExport) {
+    //    FILE *file = fopen(shapeExport, "w");
+    //    if (file) {
+    //        writeShapeDescription(file, shape);
+    //        fclose(file);
+    //    } else
+    //        puts("Failed to write shape export file.");
+    //}
+    //const char *error = NULL;
+    //switch (mode) {
+    //    case SINGLE:
+    //    case PSEUDO:
+    //        error = writeOutput(sdf, output, format);
+    //        if (error)
+    //            ABORT(error);
+    //        break;
+    //    case MULTI:
+    //        error = writeOutput(msdf, output, format);
+    //        if (error)
+    //            ABORT(error);
+    //        break;
+    //    default:
+    //        break;
+    //}
 
     return 0;
 }

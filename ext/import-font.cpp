@@ -131,6 +131,7 @@ bool loadGlyph(Shape &output, FontHandle *font, int unicode, double *advance) {
         return false;
     output.contours.clear();
     output.inverseYAxis = false;
+
     if (advance)
         *advance = font->face->glyph->advance.x/64.;
 

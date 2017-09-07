@@ -80,7 +80,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>MSDFGEN_STANDALONE;MSDFGEN_USE_CPP11;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MSDFGEN_STANDALONE;MSDFGEN_USE_CPP11;WINDOWSPC;_SCL_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalIncludeDirectories>include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -103,7 +103,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>MSDFGEN_STANDALONE;MSDFGEN_USE_CPP11;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MSDFGEN_STANDALONE;MSDFGEN_USE_CPP11;WINDOWSPC;_SCL_SECURE_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -145,7 +145,10 @@
     <ClInclude Include="core\Vector2.h" />
     <ClInclude Include="ext\import-font.h" />
     <ClInclude Include="ext\import-svg.h" />
+    <ClInclude Include="ext\json.hpp" />
+    <ClInclude Include="ext\save-dds.h" />
     <ClInclude Include="ext\save-png.h" />
+    <ClInclude Include="ext\save_material.h" />
     <ClInclude Include="msdfgen-ext.h" />
     <ClInclude Include="msdfgen.h" />
     <ClInclude Include="resource.h" />
@@ -165,7 +168,9 @@
     <ClCompile Include="core\Vector2.cpp" />
     <ClCompile Include="ext\import-font.cpp" />
     <ClCompile Include="ext\import-svg.cpp" />
+    <ClCompile Include="ext\save-dds.cpp" />
     <ClCompile Include="ext\save-png.cpp" />
+    <ClCompile Include="ext\save_material.cpp" />
     <ClCompile Include="lib\lodepng.cpp" />
     <ClCompile Include="lib\tinyxml2.cpp" />
     <ClCompile Include="main.cpp" />
